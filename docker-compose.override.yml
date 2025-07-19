@@ -1,6 +1,5 @@
 # docker-compose.override.yml
 # This file provides development-specific overrides
-version: '3.8'
 
 services:
   backend:
