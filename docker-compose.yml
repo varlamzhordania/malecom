@@ -1,0 +1,184 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  # MySQL Database
+  database:
+    image: mysql:8.0
+    container_name: malecom_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword123}
+      MYSQL_DATABASE: ${DB_NAME:-malecom_suits}
+      MYSQL_USER: ${DB_USER:-malecom_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-malecom_password123}
+      MYSQL_CHARACTER_SET_SERVER: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+      - ./database/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    networks:
+      - malecom_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-rootpassword123}"]
+      timeout: 10s
+      retries: 5
+      interval: 30s
+
+  # Redis Cache (Optional)
+  redis:
+    image: redis:7-alpine
+    container_name: malecom_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - malecom_network
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redispassword123}
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: ${NODE_ENV:-development}
+    container_name: malecom_backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 5000
+      DB_HOST: database
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-malecom_user}
+      DB_PASSWORD: ${DB_PASSWORD:-malecom_password123}
+      DB_NAME: ${DB_NAME:-malecom_suits}
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword123}
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      # Email configuration
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      FROM_EMAIL: ${FROM_EMAIL:-noreply@malecomsuits.com}
+      FROM_NAME: ${FROM_NAME:-Malecom Suits}
+      # Payment configuration
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET}
+      # Cloudinary configuration
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+      # Business settings
+      COMMISSION_RATE: ${COMMISSION_RATE:-10}
+      GUEST_SERVICE_FEE_RATE: ${GUEST_SERVICE_FEE_RATE:-0.03}
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - malecom_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      timeout: 10s
+      retries: 5
+      interval: 30s
+
+  # Frontend (React App)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: ${NODE_ENV:-development}
+    container_name: malecom_frontend
+    restart: unless-stopped
+    environment:
+      REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:5000/api/v1}
+      REACT_APP_SOCKET_URL: ${REACT_APP_SOCKET_URL:-http://localhost:5000}
+      REACT_APP_STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY}
+      REACT_APP_GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+      GENERATE_SOURCEMAP: ${GENERATE_SOURCEMAP:-true}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - malecom_network
+    stdin_open: true
+    tty: true
+
+  # Nginx Reverse Proxy (Production)
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: malecom_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - static_files:/usr/share/nginx/html
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - malecom_network
+    profiles:
+      - production
+
+  # Adminer (Database Management)
+  adminer:
+    image: adminer:4.8.1
+    container_name: malecom_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: database
+      ADMINER_DESIGN: pepa-linha
+    depends_on:
+      - database
+    networks:
+      - malecom_network
+    profiles:
+      - tools
+
+# Volumes for persistent data
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  static_files:
+    driver: local
+
+# Networks
+networks:
+  malecom_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

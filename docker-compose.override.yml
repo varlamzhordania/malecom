@@ -1,0 +1,31 @@
+# docker-compose.override.yml
+# This file provides development-specific overrides
+version: '3.8'
+
+services:
+  backend:
+    environment:
+      # Enable debug logging in development
+      DEBUG: "malecom:*"
+      LOG_LEVEL: debug
+    volumes:
+      # Hot reload for development
+      - ./backend:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+    command: npm run dev
+
+  frontend:
+    environment:
+      # React development settings
+      CHOKIDAR_USEPOLLING: true
+      FAST_REFRESH: true
+    volumes:
+      # Hot reload for development
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm start
+
+  # Add development tools
+  adminer:
+    profiles: []  # Always run in development
